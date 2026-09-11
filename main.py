@@ -1,8 +1,4 @@
 """A testable Tic-Tac-Toe application.
-
-The original public methods are kept for compatibility with the existing
-course tests. Newer operations return small dictionaries/booleans instead of
-printing, so they can be exercised without a terminal.
 """
 
 from __future__ import annotations
