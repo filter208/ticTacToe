@@ -1,4 +1,7 @@
+import copy
 import json
+
+import pytest
 from pathlib import Path
 
 from main import TicTacToe,TerminalDashboard
@@ -6,6 +9,18 @@ from main import TicTacToe,TerminalDashboard
 def _finish_x_win(game):
     """构造 X 获胜局面，供比分和终局测试复用。"""
     for row, col in [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2)]:
+        assert game.play_move(row, col)["ok"] is True
+
+
+def _finish_o_win(game):
+    """构造 O 获胜局面，供累计比分测试复用。"""
+    for row, col in [(0, 0), (1, 0), (0, 1), (1, 1), (2, 2), (1, 2)]:
+        assert game.play_move(row, col)["ok"] is True
+
+
+def _finish_draw(game):
+    """构造平局局面，供累计比分测试复用。"""
+    for row, col in [(0, 0), (0, 1), (0, 2), (1, 1), (1, 0), (1, 2), (2, 1), (2, 0), (2, 2)]:
         assert game.play_move(row, col)["ok"] is True
 
 def test_tc01_01():
@@ -361,3 +376,227 @@ def test_tc01_51():
     assert len(game.move_history) == 1
     assert game.move_history[0]["player"] == "O"
     assert "AI" in dashboard.message
+
+def test_tc01_52():
+    """难度设置：验证三个合法AI难度。"""
+    game = TicTacToe()
+    for difficulty in ("easy", "medium", "hard"):
+        game.set_difficulty(difficulty)
+        assert game.difficulty == difficulty
+
+
+def test_tc01_53():
+    """难度设置：验证非法难度抛出异常且保留原值。"""
+    game = TicTacToe(difficulty="easy")
+    for difficulty in ("expert", "", None):
+        with pytest.raises(ValueError):
+            game.set_difficulty(difficulty)
+        assert game.difficulty == "easy"
+
+
+def test_tc01_54():
+    """模式切换：验证非法模式和AI标记不改变状态。"""
+    game = TicTacToe()
+    before = game.snapshot()
+    with pytest.raises(ValueError):
+        game.set_mode("arcade", "O")
+    with pytest.raises(ValueError):
+        game.set_mode("ai", "A")
+    assert game.snapshot() == before
+
+
+def test_tc01_55():
+    """命令解析：验证坐标命令、补充别名和缺失参数。"""
+    game = TicTacToe()
+    assert game.parse_command("2/3") == ("move", (1, 2))
+    assert game.parse_command("1,2") == ("move", (0, 1))
+    assert game.parse_command("u") == ("undo", None)
+    assert game.parse_command("q") == ("quit", None)
+    assert game.parse_command("reset") == ("new", None)
+    assert game.parse_command("level hard") == ("difficulty", "hard")
+    for command in ("", "unknown", "save", "load", "mode"):
+        assert game.parse_command(command) == ("invalid", None)
+
+
+def test_tc01_56():
+    """底层落子：验证历史记录、不自动换人和布尔坐标拒绝。"""
+    game = TicTacToe()
+    assert game.make_move(0, 0) is True
+    assert game.make_move(1, 1) is True
+    assert game.current_player == "X"
+    assert len(game.move_history) == 2
+    before = game.snapshot()
+    assert game.make_move(True, 0) is False
+    assert game.make_move(-1, 0) is False
+    assert game.make_move(3, 0) is False
+    assert game.make_move(0, 3) is False
+    assert game.snapshot() == before
+
+
+def test_tc01_57():
+    """胜利线路：验证状态包含主对角线坐标。"""
+    game = TicTacToe()
+    game.board = [["X", "O", " "], ["O", "X", " "], [" ", " ", "X"]]
+    assert game.status()["line"] == ((0, 0), (1, 1), (2, 2))
+
+
+def test_tc01_58():
+    """终局悔棋：验证撤销最后一步同时回退比分。"""
+    game = TicTacToe()
+    _finish_x_win(game)
+    assert game.scoreboard()["X"] == 1
+    assert game.undo() is True
+    assert game.scoreboard()["X"] == 0
+
+
+def test_tc01_59():
+    """比分管理：验证X、O和平局可跨局累计。"""
+    game = TicTacToe()
+    _finish_x_win(game)
+    game.reset(keep_scores=True)
+    _finish_o_win(game)
+    game.reset(keep_scores=True)
+    _finish_draw(game)
+    assert game.scoreboard() == {"X": 1, "O": 1, "draws": 1}
+
+
+def test_tc01_60():
+    """简单AI：验证返回合法位置且不修改棋盘。"""
+    game = TicTacToe(difficulty="easy", seed=7)
+    game.board[0][0], game.board[1][1] = "X", "O"
+    before = copy.deepcopy(game.board)
+    assert game.choose_ai_move("O") in game.available_moves()
+    assert game.board == before
+
+
+def test_tc01_61():
+    """中等AI：验证优先获胜、阻挡和选择中心。"""
+    winning = TicTacToe(difficulty="medium")
+    winning.board = [["O", "O", " "], ["X", " ", " "], [" ", "X", " "]]
+    assert winning.choose_ai_move("O") == (0, 2)
+
+    blocking = TicTacToe(difficulty="medium")
+    blocking.board = [["O", "O", " "], ["X", " ", " "], [" ", "X", " "]]
+    assert blocking.choose_ai_move("X") == (0, 2)
+
+    centre = TicTacToe(difficulty="medium")
+    centre.board[0][0] = "X"
+    assert centre.choose_ai_move("O") == (1, 1)
+
+
+def test_tc01_62():
+    """困难AI：验证获胜、阻挡和角落叉子局面处理。"""
+    winning = TicTacToe(difficulty="hard")
+    winning.board = [["X", "X", " "], ["O", " ", " "], [" ", "O", " "]]
+    assert winning.choose_ai_move("X") == (0, 2)
+
+    blocking = TicTacToe(difficulty="hard")
+    blocking.board = [["O", "O", " "], ["X", " ", " "], [" ", "X", " "]]
+    assert blocking.choose_ai_move("X") == (0, 2)
+
+    fork = TicTacToe(difficulty="hard")
+    fork.board = [["X", " ", " "], [" ", "O", " "], [" ", " ", "X"]]
+    assert fork.choose_ai_move("O") in {(0, 1), (1, 0), (1, 2), (2, 1)}
+
+
+def test_tc01_63():
+    """AI边界：验证非法玩家、满棋盘和终局不返回落子。"""
+    game = TicTacToe(difficulty="hard")
+    before = copy.deepcopy(game.board)
+    assert game.choose_ai_move("A") is None
+    assert game.board == before
+    game.board = [["X", "O", "X"], ["O", "X", "O"], ["O", "X", "O"]]
+    assert game.choose_ai_move("X") is None
+    game.reset()
+    game.game_over = True
+    assert game.choose_ai_move("X") is None
+
+
+def test_tc01_64(tmp_path):
+    """存档路径：验证空路径和不存在父目录无法保存。"""
+    game = TicTacToe()
+    assert game.save_game(None) is False
+    assert game.save_game("") is False
+    assert game.save_game(tmp_path / "missing" / "game.json") is False
+
+
+def test_tc01_65(tmp_path):
+    """存档字段：验证非法单元格、玩家、模式和难度被拒绝。"""
+    payloads = [
+        {"board": [["A", " ", " "], [" ", " ", " "], [" ", " ", " "]]},
+        {"board": [[" ", " ", " "]] * 3, "current_player": "A"},
+        {"board": [[" ", " ", " "]] * 3, "current_player": "X", "mode": "arcade"},
+        {"board": [[" ", " ", " "]] * 3, "current_player": "X", "difficulty": "expert"},
+    ]
+    game = TicTacToe()
+    game.play_move(0, 0)
+    before = game.snapshot()
+    for index, payload in enumerate(payloads):
+        path = tmp_path / f"invalid-{index}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert game.load_game(path) is False
+        assert game.snapshot() == before
+
+
+def test_tc01_66(tmp_path):
+    """存档比分：验证加载后恢复累计比分。"""
+    path = tmp_path / "scores.json"
+    source = TicTacToe()
+    _finish_x_win(source)
+    assert source.save_game(path) is True
+    restored = TicTacToe()
+    assert restored.load_game(path) is True
+    assert restored.scoreboard()["X"] == 1
+
+
+def test_tc01_67():
+    """终端界面：验证命令可切换难度和对战模式。"""
+    game = TicTacToe()
+    inputs, output = iter(["difficulty hard", "mode ai", "quit"]), []
+    assert game.run(input_fn=lambda: next(inputs), output_fn=output.append) == "quit"
+    assert game.difficulty == "hard"
+    assert game.mode == "ai"
+
+
+def test_tc01_68():
+    """终端界面：验证人机模式自动执行AI回合。"""
+    game = TicTacToe(mode="ai", difficulty="hard")
+    inputs, output = iter(["1,1", "quit"]), []
+    assert game.run(input_fn=lambda: next(inputs), output_fn=output.append) == "quit"
+    assert len(game.move_history) == 2
+    assert game.move_history[1]["player"] == "O"
+
+
+def test_tc01_69():
+    """终端面板：验证显示的棋盘内容和当前状态同步。"""
+    game = TicTacToe()
+    game.board[0][0], game.board[1][1] = "X", "O"
+    rendered = TerminalDashboard(game, colour=False).render()
+    board_lines = [line for line in rendered.splitlines() if "│" in line]
+    assert any("1  │" in line and "X" in line for line in board_lines)
+    assert any("2  │" in line and "O" in line for line in board_lines)
+    assert "轮到玩家 X" in rendered
+
+
+def test_tc01_70():
+    """胜负状态：验证O列胜利和满棋盘平局状态。"""
+    winning = TicTacToe()
+    winning.board = [["O", "X", " "], ["O", " ", " "], ["O", " ", " "]]
+    assert winning.check_winner() == "O"
+
+    drawn = TicTacToe()
+    drawn.board = [["X", "O", "X"], ["X", "X", "O"], ["O", "X", "O"]]
+    assert drawn.status()["state"] == "draw"
+
+
+def test_tc01_71():
+    """简单AI：验证唯一空位必被选择。"""
+    game = TicTacToe(difficulty="easy", seed=7)
+    game.board = [["X", "O", "X"], ["O", "X", "O"], ["O", "X", " "]]
+    assert game.choose_ai_move("O") == (2, 2)
+
+
+def test_tc01_72():
+    """终端面板：验证初始界面展示坐标栏。"""
+    rendered = TerminalDashboard(TicTacToe(), colour=False).render()
+    assert "1       2       3" in rendered
